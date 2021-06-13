@@ -224,7 +224,8 @@ def generalized_cos_window(length, name):
 
 
 def midi_to_f0_estimate(note_number, samples, frame_step):
-    frames = tf.cast(samples // frame_step, dtype=tf.int32) + 1
+    frames = samples / frame_step
+    frames = tf.cast(tf.math.ceil(frames), dtype=tf.int32)
 
     f0_estimate = midi_to_hz(note_number)
 
@@ -242,7 +243,15 @@ def get_harmonic_frequencies(f0, harmonics):
     return h_freq
 
 
-def compute_stft(signals, frame_length, frame_step, window, fft_length=None):
+def get_number_harmonics(f0, sample_rate):
+    period = sample_rate / f0
+    harmonics = tf.cast(0.5 * period, dtype=tf.int32) + 1
+
+    return harmonics
+
+
+def compute_stft(signals, frame_length, frame_step, window,
+                 fft_length=None, normalize_window=False):
     if fft_length is None:
         fft_length = next_power_of_2(tf.cast(frame_length, dtype=tf.float32))
 
@@ -250,9 +259,12 @@ def compute_stft(signals, frame_length, frame_step, window, fft_length=None):
 
     # zero padding x to center first window at sample 0 and analyze last sample
     pad0 = tf.cast(frame_length // 2, dtype=tf.int32)
-    pad1 = tf.cast(frame_length - pad0, dtype=tf.int32)
+    pad1 = tf.cast(frame_length - pad0 - 1, dtype=tf.int32)
 
     pad_signals = tf.pad(signals, paddings=[[0, 0], [pad0, pad1]])
+
+    if normalize_window:
+        window = 2.0 * window / tf.math.reduce_sum(window)
 
     # frame signals
     framed_signals = tf.signal.frame(pad_signals, frame_length, frame_step)
@@ -305,13 +317,16 @@ def compute_ipc_stft(signals, frame_length, frame_step, window_name='blackman',
     phase = phase * (2.0 * np.pi)
     phase = tf.cast(phase, dtype=tf.complex64)
 
-    k = 2.0 / tf.math.reduce_sum(window)
-    k = tf.cast(k, dtype=tf.complex64)
+    # normalize stft
+    win_norm = 2.0 / tf.math.reduce_sum(window)
+    win_norm = tf.cast(win_norm, dtype=tf.complex64)
+    stft *= win_norm
 
     i = tf.complex(0.0, 1.0)
-    ipc_stft = k * tf.math.exp(-i * phase) * stft
+    ipc_matrix = tf.math.exp(-i * phase)
+    ipc_stft = ipc_matrix * stft
 
-    return ipc_stft, inst_freq
+    return ipc_stft, stft, ipc_matrix, inst_freq
 
 
 def normalized_autocorrelation_function(
@@ -327,7 +342,7 @@ def normalized_autocorrelation_function(
     fft_length = tf.cast(fft_length, dtype=tf.int32)
 
     pad0 = tf.cast(pre_padding, dtype=tf.int32)
-    pad1 = tf.cast(frame_length - pad0, dtype=tf.int32)
+    pad1 = tf.cast(frame_length - pad0 - 1, dtype=tf.int32)
 
     pad_signals = tf.pad(signals, paddings=[[0, 0], [pad0, pad1]])
 
@@ -335,7 +350,7 @@ def normalized_autocorrelation_function(
         pad_signals, frame_length, frame_step)
 
     # compute energy normalized auto-correlation function (nacf) in time domain
-    # nacf_time = np.zeros(shape=(1, 1000, lags))
+    # nacf_time = np.zeros(shape=(1, framed_signals.shape[1], lags))
     # sig0 = framed_signals[:, :, 0:corr_length].numpy()
     # energy0 = np.sum(sig0 * sig0, axis=-1, keepdims=True)
     # for tau in range(lags):
@@ -631,11 +646,9 @@ def harmonic_analysis(signals, f0_estimate, sample_rate, frame_step,
     frame_length = tf.cast(frame_length, dtype=tf.int32)
     fft_length = tf.cast(fft_length, dtype=tf.int32)
 
-    # compute normalized window
     window, _ = generalized_cos_window(frame_length, 'blackman')
-    window = 2.0 * window / tf.math.reduce_sum(window)
-
-    stft = compute_stft(signals, frame_length, frame_step, window, fft_length)
+    stft = compute_stft(signals, frame_length, frame_step, window, fft_length,
+                        normalize_window=True)
 
     peak_pos, peak_mag, peak_phase = stft_peak_detection(stft, -200.0)
     peak_freq = sample_rate * peak_pos / tf.cast(fft_length, dtype=tf.float32)
@@ -654,6 +667,12 @@ def harmonic_analysis(signals, f0_estimate, sample_rate, frame_step,
     h_phase = tf.cast(h_phase, dtype=tf.float32)
 
     h_mag = tf.where(h_mag == 0.0, 0.0, db_to_lin(h_mag))
+
+    # the last element is repeated so that the synthesized audio has a size
+    # greater than or equal to that of the analysis audio
+    h_freq = tf.concat([h_freq, h_freq[:, -1:, :]], axis=1)
+    h_mag = tf.concat([h_mag, h_mag[:, -1:, :]], axis=1)
+    h_phase = tf.concat([h_phase, h_phase[:, -1:, :]], axis=1)
 
     return h_freq, h_mag, h_phase
 
@@ -680,7 +699,8 @@ def iterative_harmonic_analysis(signals, f0_estimate, sample_rate, frame_step,
     for corr_periods in corr_periods_list[1:]:
         harmonic = harmonic_synthesis(h_freq, h_mag, h_phase,
                                       sample_rate, frame_step)
-        residual = signals - harmonic
+
+        residual = signals - harmonic[:, :signals.shape[1]]
 
         f0 = h_freq
         m0 = h_mag

@@ -5,7 +5,7 @@ from tsms import core
 
 class ResidualError(tf.keras.losses.Loss):
     def __init__(self,
-                 loss_type=1,
+                 loss_type=0,
                  reduction=tf.keras.losses.Reduction.AUTO,
                  name='residual_error'):
         super(ResidualError, self).__init__(
@@ -17,7 +17,7 @@ class ResidualError(tf.keras.losses.Loss):
         loss = 0.0
 
         if self.loss_type == 0:
-            residual = (y_true - y_pred)
+            residual = y_true - y_pred
             loss += tf.reduce_mean(tf.math.square(residual), axis=-1)
         elif self.loss_type == 1:
             residual = (y_true - y_pred) / (tf.math.abs(y_true) + 1.0)

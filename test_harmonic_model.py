@@ -54,12 +54,11 @@ def main():
         generate_phase=False)
 
     # harmonic model identification using optimization
-    #
     # epochs = 500
     #
     # harmonic_model.compile(
-    #     optimizer=tf.keras.optimizers.Adam(learning_rate=0.01),
-    #     loss=hm.ResidualError(),
+    #     optimizer=tf.keras.optimizers.Adam(learning_rate=0.001),
+    #     loss=tsms.sound_models.ResidualError(),
     #     run_eagerly=False)
     #
     # harmonic_model.fit(audio, audio,
@@ -67,6 +66,8 @@ def main():
     #                    callbacks=[lr_scheduler()])
 
     harmonic = harmonic_model([])
+    harmonic = harmonic[:, :audio.shape[1]]
+
     residual = audio - harmonic
 
     harmonic_model.generate_phase = True
