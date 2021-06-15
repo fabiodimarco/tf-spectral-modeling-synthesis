@@ -445,6 +445,22 @@ def refine_f0(signals, f0_estimate, sample_rate, frame_step,
     return f0, clarity, energy
 
 
+def harmonic_analysis_to_f0(h_freq, h_mag):
+    harmonics = h_freq.shape[-1]
+    harmonic_indices = tf.range(1, harmonics + 1, dtype=tf.float32)
+    harmonic_indices = harmonic_indices[tf.newaxis, tf.newaxis, :]
+    mean_mag = tf.reduce_mean(h_mag, axis=-1)
+    mean_mag = tf.where(mean_mag == 0.0, 1e-9, mean_mag)
+    f0 = tf.reduce_mean(
+        h_freq / harmonic_indices * h_mag, axis=-1) / mean_mag
+    f0 = f0[:, :-1, tf.newaxis]
+
+    f0_mean = non_zero_mean(f0, axis=1)
+    f0 = tf.where(f0 > 0.0, f0, f0_mean)
+
+    return f0
+
+
 def peak_mask(signals, threshold):
     # positions above threshold
     threshold_mask = tf.where(signals[:, :, 1:-1] > threshold, 1, 0)

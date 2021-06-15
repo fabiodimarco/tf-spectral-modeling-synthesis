@@ -17,9 +17,11 @@ class ResidualError(tf.keras.losses.Loss):
         loss = 0.0
 
         if self.loss_type == 0:
+            y_pred = y_pred[:, :y_true.shape[1]]
             residual = y_true - y_pred
             loss += tf.reduce_mean(tf.math.square(residual), axis=-1)
         elif self.loss_type == 1:
+            y_pred = y_pred[:, :y_true.shape[1]]
             residual = (y_true - y_pred) / (tf.math.abs(y_true) + 1.0)
             loss += tf.reduce_mean(tf.math.square(residual), axis=-1)
 
