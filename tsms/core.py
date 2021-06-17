@@ -102,10 +102,10 @@ def savitzky_golay(x, window_size, order, axis=-1, mode='mirror', cval=0.0):
     x3 = slice_axis(x, axis, start=-1, stop=-half_window-1, step=-1)
 
     # compute input permutation and inverse permutation
-    perm = tf.range(tf.rank(x))
-    perm = tf.unstack(perm)
-    perm[axis], perm[-1] = perm[-1], perm[axis]
-    perm = tf.stack(perm)
+    nd = tf.rank(x)
+    perm = tf.range(nd)
+    perm = tf.tensor_scatter_nd_update(
+        perm, [[axis], [nd - 1]], [perm[-1], perm[axis]])
     inv_perm = tf.math.invert_permutation(perm)
 
     # precompute coefficients
@@ -166,9 +166,8 @@ def mod_cumsum(x, mod, axis=-1):
     # compute input permutation and inverse permutation
     nd = tf.rank(x)
     perm = tf.range(nd)
-    perm = tf.unstack(perm)
-    perm[axis], perm[0] = perm[0], perm[axis]
-    perm = tf.stack(perm)
+    perm = tf.tensor_scatter_nd_update(
+        perm, [[axis], [0]], [perm[0], perm[axis]])
 
     y = tf.transpose(y, perm=perm)
 
@@ -446,7 +445,7 @@ def refine_f0(signals, f0_estimate, sample_rate, frame_step,
 
 
 def harmonic_analysis_to_f0(h_freq, h_mag):
-    harmonics = h_freq.shape[-1]
+    harmonics = tf.shape(h_freq)[-1]
     harmonic_indices = tf.range(1, harmonics + 1, dtype=tf.float32)
     harmonic_indices = harmonic_indices[tf.newaxis, tf.newaxis, :]
     mean_mag = tf.reduce_mean(h_mag, axis=-1)
@@ -497,9 +496,9 @@ def parabolic_interp(signals):
     pos_value = val - 0.25 * delta * pos_shift
 
     # center of parabola position
-    pos = tf.range(1, signals.shape[-1] - 1, dtype=tf.float32)
+    pos = tf.range(1, tf.shape(signals)[-1] - 1, dtype=tf.float32)
     pos = pos[tf.newaxis, tf.newaxis, :]
-    pos = tf.broadcast_to(pos, shape=pos_shift.shape)
+    pos = tf.broadcast_to(pos, shape=tf.shape(pos_shift))
 
     pos = pos + pos_shift
 
@@ -533,15 +532,15 @@ def stft_peak_detection(stft, db_threshold):
 
 
 def harmonic_detection(base_h_freq, peak_freq, peak_mag, peak_phase):
-    batches = np.shape(peak_freq)[0]
+    channels = np.shape(peak_freq)[0]
     frames = np.shape(peak_freq)[1]
     harmonics = np.shape(base_h_freq)[2]
 
-    h_freq = np.zeros(shape=(batches, frames, harmonics), dtype=np.float32)
-    h_mag = np.zeros(shape=(batches, frames, harmonics), dtype=np.float32)
-    h_phase = np.zeros(shape=(batches, frames, harmonics), dtype=np.float32)
+    h_freq = np.zeros(shape=(channels, frames, harmonics), dtype=np.float32)
+    h_mag = np.zeros(shape=(channels, frames, harmonics), dtype=np.float32)
+    h_phase = np.zeros(shape=(channels, frames, harmonics), dtype=np.float32)
 
-    for n in range(batches):
+    for n in range(channels):
         for m in range(frames):
             bhf = base_h_freq[n, m, :]
             freq = peak_freq[n, m, :]
@@ -582,14 +581,16 @@ def harmonic_detection(base_h_freq, peak_freq, peak_mag, peak_phase):
 
 def generate_phase(h_freq, sample_rate, frame_step, initial_h_phase=None):
     if initial_h_phase is None:
-        initial_h_phase = tf.zeros((h_freq.shape[0], 1, h_freq.shape[2]))
+        channels = tf.shape(h_freq)[0]
+        harmonics = tf.shape(h_freq)[2]
+        initial_h_phase = tf.zeros((channels, 1, harmonics))
 
     frame_rate = sample_rate / frame_step
     norm_omega = 0.5 * (h_freq[:, :-1, :] + h_freq[:, 1:, :]) / frame_rate
     h_phase = mod_cumsum(norm_omega, mod=1.0, axis=1)
-    h_phase = tf.pad(h_phase, ((0, 0), (1, 0), (0, 0))) + initial_h_phase
-    h_phase = h_phase % 1.0
-    h_phase = h_phase * (2.0 * np.pi)
+    h_phase = tf.pad(h_phase, ((0, 0), (1, 0), (0, 0)))
+    h_phase = h_phase * (2.0 * np.pi) + initial_h_phase
+    h_phase = h_phase % (2.0 * np.pi)
 
     return h_phase
 
@@ -667,6 +668,7 @@ def harmonic_analysis(signals, f0_estimate, sample_rate, frame_step,
                         normalize_window=True)
 
     peak_pos, peak_mag, peak_phase = stft_peak_detection(stft, -200.0)
+    peak_phase %= 2.0 * np.pi
     peak_freq = sample_rate * peak_pos / tf.cast(fft_length, dtype=tf.float32)
     base_h_freq = get_harmonic_frequencies(f0_estimate, harmonics)
 
@@ -746,7 +748,7 @@ def iterative_harmonic_analysis(signals, f0_estimate, sample_rate, frame_step,
         h_complex = m0 * tf.math.exp(i * p0) + m1 * tf.math.exp(i * p1)
 
         h_mag = tf.math.abs(h_complex)
-        h_phase = tf.math.angle(h_complex)
+        h_phase = tf.math.angle(h_complex) % (2.0 * np.pi)
 
     # remove zeros from frequency tracks
     h_freq = freq_smoothing(h_freq)

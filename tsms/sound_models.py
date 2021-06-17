@@ -80,12 +80,12 @@ class HarmonicModelRegularizer(tf.keras.regularizers.Regularizer):
 
 
 class HarmonicModel(tf.keras.Model):
-    def __init__(self, sample_rate, frame_step, batches, frames, harmonics,
+    def __init__(self, sample_rate, frame_step, channels, frames, harmonics,
                  h_freq=None, h_mag=None, h_phase=None, generate_phase=False):
         super(HarmonicModel, self).__init__()
         self.sample_rate = sample_rate
         self.frame_step = frame_step
-        self.batches = batches
+        self.channels = channels
         self.frames = frames
         self.harmonics = harmonics
 
@@ -103,7 +103,7 @@ class HarmonicModel(tf.keras.Model):
 
         self._shifts = self.add_weight(
             name='shifts',
-            shape=(self.batches, self.frames, self.harmonics, 3),
+            shape=(self.channels, self.frames, self.harmonics, 3),
             dtype=tf.float32,
             initializer=tf.keras.initializers.Zeros(),
             trainable=True)

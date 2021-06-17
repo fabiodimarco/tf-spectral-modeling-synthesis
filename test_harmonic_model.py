@@ -47,7 +47,7 @@ def main():
     harmonic_model = tsms.sound_models.HarmonicModel(
         sample_rate=sample_rate,
         frame_step=frame_step,
-        batches=h_freq.shape[0],
+        channels=h_freq.shape[0],
         frames=h_freq.shape[1],
         harmonics=h_freq.shape[2],
         h_freq=h_freq, h_mag=h_mag, h_phase=h_phase,
