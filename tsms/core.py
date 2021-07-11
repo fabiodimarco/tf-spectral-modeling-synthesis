@@ -7,6 +7,7 @@ def logb(x, base=2.0):
 
 
 def next_power_of_2(x):
+    x = tf.cast(x, tf.float32)
     return 2.0 ** tf.math.ceil(logb(x, 2.0))
 
 
@@ -21,7 +22,7 @@ def lin_to_db(x):
 
 
 def midi_to_hz(notes):
-    return 440.0 * (2.0**((notes - 69.0) / 12.0))
+    return 440.0 * (2.0 ** ((notes - 69.0) / 12.0))
 
 
 def hz_to_midi(freq):
@@ -61,10 +62,10 @@ def slice_axis(input, axis, start=None, stop=None, step=None):
     return slice
 
 
-def phase_diff(p0, p1):
+def phase_diff(p0, p1, mod=2.0*np.pi):
     dd = p0 - p1
-    ddmod = tf.math.floormod(dd + np.pi, 2 * np.pi) - np.pi
-    ddmod = tf.where((ddmod == -np.pi) & (dd > 0), np.pi, ddmod)
+    ddmod = tf.math.floormod(dd + 0.5 * mod, mod) - 0.5 * mod
+    ddmod = tf.where((ddmod == -0.5 * mod) & (dd > 0.0), 0.5 * mod, ddmod)
 
     return ddmod
 
@@ -99,7 +100,7 @@ def savitzky_golay(x, window_size, order, axis=-1, mode='mirror', cval=0.0):
     x0 = slice_axis(x, axis, stop=1)
     x1 = slice_axis(x, axis, start=-1)
     x2 = slice_axis(x, axis, start=half_window, stop=0, step=-1)
-    x3 = slice_axis(x, axis, start=-1, stop=-half_window-1, step=-1)
+    x3 = slice_axis(x, axis, start=-1, stop=-half_window - 1, step=-1)
 
     # compute input permutation and inverse permutation
     nd = tf.rank(x)
@@ -235,9 +236,10 @@ def midi_to_f0_estimate(note_number, samples, frame_step):
 
 
 def get_harmonic_frequencies(f0, harmonics):
-    f_ratios = tf.linspace(1.0, float(harmonics), int(harmonics))
-    f_ratios = f_ratios[tf.newaxis, tf.newaxis, :]
-    h_freq = f0 * f_ratios
+    harmonic_numbers = tf.range(1, harmonics + 1, dtype=tf.float32)
+    harmonic_numbers = harmonic_numbers[tf.newaxis, tf.newaxis, :]
+
+    h_freq = f0 * harmonic_numbers
 
     return h_freq
 
@@ -259,6 +261,9 @@ def compute_stft(signals, frame_length, frame_step, window,
     # zero padding x to center first window at sample 0 and analyze last sample
     pad0 = tf.cast(frame_length // 2, dtype=tf.int32)
     pad1 = tf.cast(frame_length - pad0 - 1, dtype=tf.int32)
+
+    # pad0 = tf.cast(0, dtype=tf.int32)
+    # pad1 = tf.cast(frame_length - pad0 - 1, dtype=tf.int32)
 
     pad_signals = tf.pad(signals, paddings=[[0, 0], [pad0, pad1]])
 
@@ -446,13 +451,13 @@ def refine_f0(signals, f0_estimate, sample_rate, frame_step,
 
 def harmonic_analysis_to_f0(h_freq, h_mag):
     harmonics = tf.shape(h_freq)[-1]
-    harmonic_indices = tf.range(1, harmonics + 1, dtype=tf.float32)
-    harmonic_indices = harmonic_indices[tf.newaxis, tf.newaxis, :]
-    mean_mag = tf.reduce_mean(h_mag, axis=-1)
-    mean_mag = tf.where(mean_mag == 0.0, 1e-9, mean_mag)
-    f0 = tf.reduce_mean(
-        h_freq / harmonic_indices * h_mag, axis=-1) / mean_mag
-    f0 = f0[:, :-1, tf.newaxis]
+    harmonic_numbers = tf.range(1, harmonics + 1, dtype=tf.float32)
+    harmonic_numbers = harmonic_numbers[tf.newaxis, tf.newaxis, :]
+
+    mean_mag = tf.math.reduce_mean(h_mag, axis=-1)
+    f0 = tf.math.reduce_mean(
+        h_freq / harmonic_numbers * h_mag, axis=-1) / mean_mag
+    f0 = tf.where(mean_mag > 0.0, f0, 0.0)
 
     f0_mean = non_zero_mean(f0, axis=1)
     f0 = tf.where(f0 > 0.0, f0, f0_mean)
@@ -527,14 +532,15 @@ def stft_peak_detection(stft, db_threshold):
         phase[:, :, 1:-1] * (1.0 + pos_shift) - phase[:, :, :-2] * pos_shift)
 
     peak_phase *= mask
+    peak_phase %= 2.0 * np.pi
 
     return peak_pos, peak_mag, peak_phase
 
 
-def harmonic_detection(base_h_freq, peak_freq, peak_mag, peak_phase):
+def harmonic_detection(h_freq_estimate, peak_freq, peak_mag, peak_phase):
     channels = np.shape(peak_freq)[0]
     frames = np.shape(peak_freq)[1]
-    harmonics = np.shape(base_h_freq)[2]
+    harmonics = np.shape(h_freq_estimate)[2]
 
     h_freq = np.zeros(shape=(channels, frames, harmonics), dtype=np.float32)
     h_mag = np.zeros(shape=(channels, frames, harmonics), dtype=np.float32)
@@ -542,7 +548,7 @@ def harmonic_detection(base_h_freq, peak_freq, peak_mag, peak_phase):
 
     for n in range(channels):
         for m in range(frames):
-            bhf = base_h_freq[n, m, :]
+            hfe = h_freq_estimate[n, m, :]
             freq = peak_freq[n, m, :]
             mag = peak_mag[n, m, :]
             phase = peak_phase[n, m, :]
@@ -559,17 +565,17 @@ def harmonic_detection(base_h_freq, peak_freq, peak_mag, peak_phase):
                 if j == n_freq:
                     break
 
-                cur_diff = np.abs(bhf[i] - freq[j])
+                cur_diff = np.abs(hfe[i] - freq[j])
                 diff = cur_diff
                 while cur_diff <= diff:
                     j += 1
                     if j == n_freq:
                         break
                     diff = cur_diff
-                    cur_diff = np.abs(bhf[i] - freq[j])
+                    cur_diff = np.abs(hfe[i] - freq[j])
 
                 if i == harmonics - 1 or np.abs(
-                        bhf[i + 1] - freq[j - 1]) > diff:
+                        hfe[i + 1] - freq[j - 1]) > diff:
                     h_freq[n, m, i] = freq[j - 1]
                     h_mag[n, m, i] = mag[j - 1]
                     h_phase[n, m, i] = phase[j - 1]
@@ -598,8 +604,8 @@ def generate_phase(h_freq, sample_rate, frame_step, initial_h_phase=None):
 def freq_smoothing(x, window=0):
     # replace isolated zeros with linear interpolation
     xs = tf.pad(x, ((0, 0), (1, 1), (0, 0)))
-    cond = (xs[:, 2:, :] != 0.0) &\
-           (xs[:, :-2, :] != 0.0) &\
+    cond = (xs[:, 2:, :] != 0.0) & \
+           (xs[:, :-2, :] != 0.0) & \
            (xs[:, 1:-1, :] == 0.0)
     xs = tf.where(cond, 0.5 * (xs[:, 2:, :] + xs[:, :-2, :]), xs[:, 1:-1, :])
 
@@ -644,21 +650,19 @@ def harmonic_synthesis(h_freq, h_mag, h_phase, sample_rate, frame_step):
     return audio
 
 
-def harmonic_analysis(signals, f0_estimate, sample_rate, frame_step,
-                      fft_length=None, corr_periods=16.0):
+def harmonic_analysis(signals, h_freq_estimate, sample_rate, frame_step,
+                      frame_length, min_fft_length=None):
     sample_rate = tf.cast(sample_rate, dtype=tf.float32)
     frame_step = tf.cast(frame_step, dtype=tf.int32)
+    frame_length = tf.cast(frame_length, dtype=tf.float32)
 
-    min_f0 = tf.math.reduce_min(f0_estimate)
-    max_period = sample_rate / min_f0
-    harmonics = tf.cast(0.5 * max_period, dtype=tf.int32) + 1
-
-    frame_length = tf.math.round(corr_periods * max_period)
     # force odd length
     frame_length = frame_length + (1.0 - tf.math.floormod(frame_length, 2))
 
-    if fft_length is None:
+    if min_fft_length is None or min_fft_length < frame_length:
         fft_length = next_power_of_2(frame_length)
+    else:
+        fft_length = min_fft_length
 
     frame_length = tf.cast(frame_length, dtype=tf.int32)
     fft_length = tf.cast(fft_length, dtype=tf.int32)
@@ -668,14 +672,12 @@ def harmonic_analysis(signals, f0_estimate, sample_rate, frame_step,
                         normalize_window=True)
 
     peak_pos, peak_mag, peak_phase = stft_peak_detection(stft, -200.0)
-    peak_phase %= 2.0 * np.pi
     peak_freq = sample_rate * peak_pos / tf.cast(fft_length, dtype=tf.float32)
-    base_h_freq = get_harmonic_frequencies(f0_estimate, harmonics)
 
     # this part is implemented with numpy because I was not able to get
     # a fast implementation in tensorflow
     h_freq, h_mag, h_phase = harmonic_detection(
-        base_h_freq.numpy(),
+        h_freq_estimate.numpy(),
         peak_freq.numpy(),
         peak_mag.numpy(),
         peak_phase.numpy())
@@ -696,25 +698,32 @@ def harmonic_analysis(signals, f0_estimate, sample_rate, frame_step,
 
 
 def iterative_harmonic_analysis(signals, f0_estimate, sample_rate, frame_step,
-                                fft_length=None, corr_periods_list=None,
-                                freq_smoothing_window=21):
-    if corr_periods_list is None or len(corr_periods_list) == 0:
-        corr_periods_list = [8.0] * 2
+                                frame_length_list=None, min_fft_length=None,
+                                freq_smoothing_window=21,
+                                semitone_variation_tol=None):
+    min_f0 = tf.math.reduce_min(f0_estimate)
+    harmonics = get_number_harmonics(min_f0, sample_rate)
+    h_freq_estimate = get_harmonic_frequencies(f0_estimate, harmonics)
+
+    if frame_length_list is None:
+        f0_mean = float(tf.math.reduce_mean(f0_estimate))
+        period = sample_rate / f0_mean
+        frame_length_list = [int(round(8.0 * period))] * 4
 
     h_freq, h_mag, h_phase = harmonic_analysis(
         signals=signals,
-        f0_estimate=f0_estimate,
+        h_freq_estimate=h_freq_estimate,
         sample_rate=sample_rate,
         frame_step=frame_step,
-        fft_length=fft_length,
-        corr_periods=corr_periods_list[0])
+        frame_length=frame_length_list[0],
+        min_fft_length=min_fft_length)
 
     h_freq = tf.where(h_freq == 0.0,
                       0.0, freq_smoothing(h_freq, window=freq_smoothing_window))
 
     i = tf.complex(0.0, 1.0)
 
-    for corr_periods in corr_periods_list[1:]:
+    for frame_length in frame_length_list[1:]:
         harmonic = harmonic_synthesis(h_freq, h_mag, h_phase,
                                       sample_rate, frame_step)
 
@@ -725,13 +734,31 @@ def iterative_harmonic_analysis(signals, f0_estimate, sample_rate, frame_step,
         p0 = h_phase
 
         f1, m1, p1 = harmonic_analysis(
-                signals=residual,
-                f0_estimate=f0_estimate,
-                sample_rate=sample_rate,
-                frame_step=frame_step,
-                fft_length=fft_length,
-                corr_periods=corr_periods)
+            signals=residual,
+            h_freq_estimate=h_freq_estimate,
+            sample_rate=sample_rate,
+            frame_step=frame_step,
+            frame_length=frame_length,
+            min_fft_length=min_fft_length)
 
+        # limits the frequency variations with respect to the first iteration
+        if semitone_variation_tol is not None:
+            up_tol = 2.0 ** (semitone_variation_tol / 12.0)
+            down_tol = 2.0 ** (-semitone_variation_tol / 12.0)
+
+            hfe = tf.concat([h_freq_estimate, h_freq_estimate[:, -1:, :]],
+                            axis=1)
+
+            f1 = tf.where((f0 > 0.0) &
+                          (f1 > 0.0) &
+                          (f1 < hfe * up_tol) &
+                          (f1 > hfe * down_tol),
+                          f1, 0.0)
+
+            m1 = tf.where(f1 == 0.0, 0.0, m1)
+            p1 = tf.where(f1 == 0.0, 0.0, p1)
+
+        # adds to h_freq, h_mag, h_phase the new identified in the residual
         f1 = tf.where(f1 == 0.0,
                       0.0, freq_smoothing(f1, window=freq_smoothing_window))
 
@@ -759,7 +786,7 @@ def iterative_harmonic_analysis(signals, f0_estimate, sample_rate, frame_step,
 def clean_sinusoidal_tracks(h_freq, h_mag, h_phase, sample_rate, frame_step):
     # TODO: improve heuristic
     f_diff = h_freq[:, 1:, :] - h_freq[:, :-1, :]
-    m_diff = h_freq[:, 1:, :] - h_freq[:, :-1, :]
+    m_diff = h_mag[:, 1:, :] - h_mag[:, :-1, :]
 
     g_phase = generate_phase(h_freq, sample_rate, frame_step)
     p_diff = phase_diff(h_phase, g_phase)
@@ -794,14 +821,14 @@ def clean_sinusoidal_tracks(h_freq, h_mag, h_phase, sample_rate, frame_step):
         0.0, h_mag)
 
     h_mag = tf.pad(h_mag, ((0, 0), (1, 1), (0, 0)))
-    cond = (h_mag[:, 2:, :] == 0.0) &\
-           (h_mag[:, :-2, :] == 0.0) &\
+    cond = (h_mag[:, 2:, :] == 0.0) & \
+           (h_mag[:, :-2, :] == 0.0) & \
            (h_mag[:, 1:-1, :] != 0.0)
     h_mag = tf.where(cond, 0.0, h_mag[:, 1:-1, :])
 
     h_mag = tf.pad(h_mag, ((0, 0), (1, 1), (0, 0)))
-    cond = (h_mag[:, 2:, :] != 0.0) &\
-           (h_mag[:, :-2, :] != 0.0) &\
+    cond = (h_mag[:, 2:, :] != 0.0) & \
+           (h_mag[:, :-2, :] != 0.0) & \
            (h_mag[:, 1:-1, :] == 0.0)
     h_mag = tf.where(cond,
                      0.5 * (h_mag[:, 2:, :] + h_mag[:, :-2, :]),

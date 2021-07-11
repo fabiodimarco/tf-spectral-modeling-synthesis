@@ -38,9 +38,9 @@ def main():
         signals=audio,
         f0_estimate=refined_f0_estimate,
         sample_rate=sample_rate,
-        frame_step=frame_step,
-        corr_periods_list=[8.0] * 4,
-        freq_smoothing_window=21)
+        frame_step=frame_step)
+
+    f0_harmonic = tsms.core.harmonic_analysis_to_f0(h_freq, h_mag)
 
     print(h_freq.shape)
 
@@ -78,10 +78,10 @@ def main():
     residual = np.squeeze(residual.numpy())
     no_phase = np.squeeze(no_phase.numpy())
 
-    sf.write('samples/outs/original.wav', 0.5 * original, sample_rate)
-    sf.write('samples/outs/harmonic.wav', 0.5 * harmonic, sample_rate)
-    sf.write('samples/outs/residual.wav', 0.5 * residual, sample_rate)
-    sf.write('samples/outs/no_phase.wav', 0.5 * no_phase, sample_rate)
+    sf.write('samples/outs/original.wav', original, sample_rate)
+    sf.write('samples/outs/harmonic.wav', harmonic, sample_rate)
+    sf.write('samples/outs/residual.wav', residual, sample_rate)
+    sf.write('samples/outs/no_phase.wav', no_phase, sample_rate)
 
     # plot results
 
@@ -97,14 +97,16 @@ def main():
         plt.title(title + ' spectrogram - fft_size = 1024')
 
     plt.figure()
-    plt.plot(np.squeeze(f0_estimate.numpy()), label='f0')
-    plt.plot(np.squeeze(refined_f0_estimate.numpy()), label='f0 refined')
+    plt.plot(np.squeeze(f0_estimate.numpy()), label='f0 midi')
+    plt.plot(np.squeeze(refined_f0_estimate.numpy()), label='f0 correlation')
+    plt.plot(np.squeeze(f0_harmonic.numpy()), label='f0 harmonic')
     plt.legend()
     plt.draw()
 
     plt.figure()
     plt.plot(original, label='original')
     plt.plot(harmonic, label='harmonic')
+    plt.plot(residual, label='residual')
     plt.legend()
     plt.draw()
 
