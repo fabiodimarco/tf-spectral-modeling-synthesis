@@ -246,7 +246,7 @@ def get_harmonic_frequencies(f0, harmonics):
 
 def get_number_harmonics(f0, sample_rate):
     period = sample_rate / f0
-    harmonics = tf.cast(0.5 * period, dtype=tf.int32) + 1
+    harmonics = tf.cast(0.5 * period, dtype=tf.int32)
 
     return harmonics
 
@@ -651,7 +651,7 @@ def harmonic_synthesis(h_freq, h_mag, h_phase, sample_rate, frame_step):
 
 
 def harmonic_analysis(signals, h_freq_estimate, sample_rate, frame_step,
-                      frame_length, min_fft_length=None):
+                      frame_length, min_fft_length=None, db_threshold=-180.0):
     sample_rate = tf.cast(sample_rate, dtype=tf.float32)
     frame_step = tf.cast(frame_step, dtype=tf.int32)
     frame_length = tf.cast(frame_length, dtype=tf.float32)
@@ -671,7 +671,7 @@ def harmonic_analysis(signals, h_freq_estimate, sample_rate, frame_step,
     stft = compute_stft(signals, frame_length, frame_step, window, fft_length,
                         normalize_window=True)
 
-    peak_pos, peak_mag, peak_phase = stft_peak_detection(stft, -200.0)
+    peak_pos, peak_mag, peak_phase = stft_peak_detection(stft, db_threshold)
     peak_freq = sample_rate * peak_pos / tf.cast(fft_length, dtype=tf.float32)
 
     # this part is implemented with numpy because I was not able to get
@@ -701,8 +701,8 @@ def iterative_harmonic_analysis(signals, f0_estimate, sample_rate, frame_step,
                                 frame_length_list=None, min_fft_length=None,
                                 freq_smoothing_window=21,
                                 semitone_variation_tol=None):
-    min_f0 = tf.math.reduce_min(f0_estimate)
-    harmonics = get_number_harmonics(min_f0, sample_rate)
+    max_f0 = tf.math.reduce_max(f0_estimate)
+    harmonics = get_number_harmonics(max_f0, sample_rate)
     h_freq_estimate = get_harmonic_frequencies(f0_estimate, harmonics)
 
     if frame_length_list is None:
@@ -716,7 +716,8 @@ def iterative_harmonic_analysis(signals, f0_estimate, sample_rate, frame_step,
         sample_rate=sample_rate,
         frame_step=frame_step,
         frame_length=frame_length_list[0],
-        min_fft_length=min_fft_length)
+        min_fft_length=min_fft_length,
+        db_threshold=-180.0)
 
     h_freq = tf.where(h_freq == 0.0,
                       0.0, freq_smoothing(h_freq, window=freq_smoothing_window))
@@ -739,7 +740,8 @@ def iterative_harmonic_analysis(signals, f0_estimate, sample_rate, frame_step,
             sample_rate=sample_rate,
             frame_step=frame_step,
             frame_length=frame_length,
-            min_fft_length=min_fft_length)
+            min_fft_length=min_fft_length,
+            db_threshold=-180.0)
 
         # limits the frequency variations with respect to the first iteration
         if semitone_variation_tol is not None:

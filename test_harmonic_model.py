@@ -1,6 +1,7 @@
 import tensorflow as tf
 import numpy as np
 import glob
+import os.path
 import soundfile as sf
 import matplotlib.pyplot as plt
 import tsms
@@ -38,9 +39,8 @@ def main():
         signals=audio,
         f0_estimate=refined_f0_estimate,
         sample_rate=sample_rate,
-        frame_step=frame_step)
-
-    f0_harmonic = tsms.core.harmonic_analysis_to_f0(h_freq, h_mag)
+        frame_step=frame_step,
+        semitone_variation_tol=1.0)
 
     print(h_freq.shape)
 
@@ -78,10 +78,13 @@ def main():
     residual = np.squeeze(residual.numpy())
     no_phase = np.squeeze(no_phase.numpy())
 
-    sf.write('samples/outs/original.wav', original, sample_rate)
-    sf.write('samples/outs/harmonic.wav', harmonic, sample_rate)
-    sf.write('samples/outs/residual.wav', residual, sample_rate)
-    sf.write('samples/outs/no_phase.wav', no_phase, sample_rate)
+    filename = os.path.basename(audio_file)
+    sf.write(f'samples/outs/{filename}_original.wav', original, sample_rate)
+    sf.write(f'samples/outs/{filename}_harmonic.wav', harmonic, sample_rate)
+    sf.write(f'samples/outs/{filename}_residual.wav', residual, sample_rate)
+    sf.write(f'samples/outs/{filename}_no_phase.wav', no_phase, sample_rate)
+
+    plt.show()
 
     # plot results
 
@@ -95,6 +98,8 @@ def main():
         plt.specgram(x, NFFT=1024, Fs=sample_rate, window=None,
                      noverlap=1024 - frame_step, mode='psd', vmin=-180)
         plt.title(title + ' spectrogram - fft_size = 1024')
+
+    f0_harmonic = tsms.core.harmonic_analysis_to_f0(h_freq, h_mag)
 
     plt.figure()
     plt.plot(np.squeeze(f0_estimate.numpy()), label='f0 midi')
@@ -116,7 +121,7 @@ def main():
 
     plt.figure()
     h_freq = harmonic_model.h_freq
-    h_freq = tf.where(h_freq == 0.0, np.inf, h_freq)
+    # h_freq = tf.where(h_freq == 0.0, np.inf, h_freq)
     plt.plot(np.squeeze(h_freq.numpy()))
     plt.title('frequency of sinusoidal tracks')
 
