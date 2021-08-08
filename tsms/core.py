@@ -272,7 +272,7 @@ def compute_stft(signals, frame_length, frame_step, window,
 
     # frame signals
     framed_signals = tf.signal.frame(pad_signals, frame_length, frame_step)
-    framed_signals *= window
+    framed_signals = framed_signals * window
     framed_signals = tf.pad(
         framed_signals,
         paddings=[[0, 0], [0, 0], [0, fft_length - frame_length]])
@@ -324,7 +324,7 @@ def compute_ipc_stft(signals, frame_length, frame_step, window_name='blackman',
     # normalize stft
     win_norm = 2.0 / tf.math.reduce_sum(window)
     win_norm = tf.cast(win_norm, dtype=tf.complex64)
-    stft *= win_norm
+    stft = stft * win_norm
 
     i = tf.complex(0.0, 1.0)
     ipc_matrix = tf.math.exp(-i * phase)
@@ -429,14 +429,14 @@ def refine_f0(signals, f0_estimate, sample_rate, frame_step,
         tf.math.logical_and(peak_pos > min_period, peak_pos < max_period),
         1.0, 0.0)
 
-    peak_pos *= r_mask
-    peak_value *= r_mask
+    peak_pos = peak_pos * r_mask
+    peak_value = peak_value * r_mask
 
     clarity = tf.math.reduce_max(peak_value, axis=-1, keepdims=True)
     max_mask = tf.where(
         tf.math.logical_and(clarity > clarity_threshold, peak_value == clarity),
         1.0, 0.0)
-    peak_pos *= max_mask
+    peak_pos = peak_pos * max_mask
 
     period = non_zero_mean(peak_pos, axis=-1)
 
@@ -524,15 +524,15 @@ def stft_peak_detection(stft, db_threshold):
     peak_mag = pos_value * mask
 
     # phase of peaks by linear interpolation
-    pos_shift *= mask
+    pos_shift = pos_shift * mask
 
     peak_phase = tf.where(
         pos_shift >= 0.0,
         phase[:, :, 1:-1] * (1.0 - pos_shift) + phase[:, :, 2:] * pos_shift,
         phase[:, :, 1:-1] * (1.0 + pos_shift) - phase[:, :, :-2] * pos_shift)
 
-    peak_phase *= mask
-    peak_phase %= 2.0 * np.pi
+    peak_phase = peak_phase * mask
+    peak_phase = peak_phase * (2.0 * np.pi)
 
     return peak_pos, peak_mag, peak_phase
 
