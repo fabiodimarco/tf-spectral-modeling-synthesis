@@ -532,7 +532,7 @@ def stft_peak_detection(stft, db_threshold):
         phase[:, :, 1:-1] * (1.0 + pos_shift) - phase[:, :, :-2] * pos_shift)
 
     peak_phase = peak_phase * mask
-    peak_phase = peak_phase * (2.0 * np.pi)
+    peak_phase = peak_phase % (2.0 * np.pi)
 
     return peak_pos, peak_mag, peak_phase
 
