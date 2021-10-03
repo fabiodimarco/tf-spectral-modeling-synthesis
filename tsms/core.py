@@ -586,17 +586,38 @@ def harmonic_detection(h_freq_estimate, peak_freq, peak_mag, peak_phase):
     return h_freq, h_mag, h_phase
 
 
-def generate_phase(h_freq, sample_rate, frame_step, initial_h_phase=None):
-    if initial_h_phase is None:
+def compute_freq_correction(h_freq, h_phase, sample_rate, frame_step):
+    frame_rate = sample_rate / frame_step
+    freq_integral = 0.5 * (h_freq[:, :-1, :] + h_freq[:, 1:, :]) / frame_rate
+    norm_phase = h_phase / (2.0 * np.pi)
+
+    p0 = tf.pad(norm_phase[:, :-1, :], ((0, 0), (1, 0), (0, 0)))
+    p1 = norm_phase
+    freq_integral = tf.pad(freq_integral, ((0, 0), (1, 0), (0, 0)))
+
+    freq_correction = phase_diff(p1, p0 + freq_integral, mod=1.0)
+
+    return freq_correction
+
+
+def generate_phase(h_freq, sample_rate, frame_step,
+                   freq_correction=None, initial_phase=None):
+    if freq_correction is None:
         channels = tf.shape(h_freq)[0]
         harmonics = tf.shape(h_freq)[2]
-        initial_h_phase = tf.zeros((channels, 1, harmonics))
+        freq_correction = tf.zeros(shape=(channels, 1, harmonics))
+
+    if initial_phase is None:
+        channels = tf.shape(h_freq)[0]
+        harmonics = tf.shape(h_freq)[2]
+        initial_phase = tf.zeros(shape=(channels, 1, harmonics))
 
     frame_rate = sample_rate / frame_step
-    norm_omega = 0.5 * (h_freq[:, :-1, :] + h_freq[:, 1:, :]) / frame_rate
-    h_phase = mod_cumsum(norm_omega, mod=1.0, axis=1)
-    h_phase = tf.pad(h_phase, ((0, 0), (1, 0), (0, 0)))
-    h_phase = h_phase * (2.0 * np.pi) + initial_h_phase
+    freq_integral = 0.5 * (h_freq[:, :-1, :] + h_freq[:, 1:, :]) / frame_rate
+    freq_integral = tf.pad(freq_integral, ((0, 0), (1, 0), (0, 0)))
+    freq_integral = freq_integral + freq_correction
+    h_phase = mod_cumsum(freq_integral, mod=1.0, axis=1)
+    h_phase = h_phase * (2.0 * np.pi) + initial_phase
     h_phase = h_phase % (2.0 * np.pi)
 
     return h_phase
