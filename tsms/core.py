@@ -618,9 +618,12 @@ def freq_smoothing(x, window=0):
         xs = savitzky_golay(xs, window, 2, axis=1, mode='constant', cval=xm)
 
     return xs
+def harmonic_synthesis(h_freq, h_mag, h_phase, sample_rate, frame_step,
+                       method='pi'):
+    # synthesis methods
+    # pi: parameter interpolation
+    # ola: overlap and add
 
-
-def harmonic_synthesis(h_freq, h_mag, h_phase, sample_rate, frame_step):
     # remove components above nyquist frequency
     h_mag = tf.where(
         tf.greater_equal(h_freq, sample_rate / 2.0),
@@ -630,22 +633,67 @@ def harmonic_synthesis(h_freq, h_mag, h_phase, sample_rate, frame_step):
     h_phase = tf.expand_dims(h_phase, axis=-1)
     h_mag = tf.expand_dims(h_mag, axis=-1)
 
-    # triangular window
-    window = tf.range(0, frame_step + 1, dtype=tf.float32) / frame_step
-    window = tf.concat([window[:-1], window[::-1]], axis=0)
-    window = window[tf.newaxis, tf.newaxis, :]
+    audio = None
 
-    # time axis
-    t = tf.range(-frame_step, frame_step + 1, dtype=tf.float32) / sample_rate
-    t = t[tf.newaxis, tf.newaxis, tf.newaxis, :]
+    if method == 'pi':  # pi: parameter interpolation
+        w = h_freq * (2.0 * np.pi)
+        m0 = h_mag[:, :-1, :, :]
+        m1 = h_mag[:, 1:, :, :]
+        w0 = w[:, :-1, :, :]
+        w1 = w[:, 1:, :, :]
+        p0 = h_phase[:, :-1, :, :]
+        p1 = h_phase[:, 1:, :, :]
 
-    phases = 2.0 * np.pi * h_freq * t + h_phase
-    wavs = tf.cos(phases)
-    wavs = h_mag * wavs
-    wavs = tf.reduce_sum(wavs, axis=-2)
-    wavs = window * wavs
-    audio = tf.signal.overlap_and_add(wavs, frame_step)
-    audio = audio[:, frame_step:-(frame_step + 1)]
+        # compute M (phase interpolation unwrapping)
+        period = frame_step / sample_rate
+        x = ((p0 + w0 * period - p1) + (w1 - w0) * (period/2.0)) / (2.0 * np.pi)
+        m = tf.math.round(x)
+
+        # compute alpha(M) and beta(M)
+        x0 = p1 - p0 - w0 * period + 2.0 * np.pi * m
+        x1 = w1 - w0
+
+        period2 = period * period
+        period3 = period2 * period
+
+        alpha = (3.0 / period2) * x0 + (-1.0 / period) * x1
+        beta = (-2.0 / period3) * x0 + (1.0 / period2) * x1
+
+        # parameters interpolation
+        samples = tf.range(0, frame_step, dtype=tf.float32)
+        samples = samples[tf.newaxis, tf.newaxis, tf.newaxis, :]
+
+        # cubic phase interpolation
+        t = samples / sample_rate
+        # freqs = (w0 + (2.0 * alpha + 3.0 * beta * t) * t) / (2.0 * np.pi)
+        phases = p0 + (w0 + (alpha + beta * t) * t) * t
+
+        # linear amplitude interpolation
+        gamma = samples / frame_step
+        mags = (1.0 - gamma) * m0 + gamma * m1
+
+        wavs = tf.cos(phases)
+        wavs = mags * wavs
+        wavs = tf.reduce_sum(wavs, axis=2)
+        audio = tf.reshape(wavs, shape=(tf.shape(wavs)[0], -1))
+
+    elif method == 'ola':  # ola: overlap and add
+        # triangular window
+        window = tf.range(0, frame_step+1, dtype=tf.float32) / frame_step
+        window = tf.concat([window[:-1], window[::-1]], axis=0)
+        window = window[tf.newaxis, tf.newaxis, :]
+
+        # time axis
+        t = tf.range(-frame_step, frame_step+1, dtype=tf.float32) / sample_rate
+        t = t[tf.newaxis, tf.newaxis, tf.newaxis, :]
+
+        phases = 2.0 * np.pi * h_freq * t + h_phase
+        wavs = tf.cos(phases)
+        wavs = h_mag * wavs
+        wavs = tf.reduce_sum(wavs, axis=2)
+        wavs = window * wavs
+        audio = tf.signal.overlap_and_add(wavs, frame_step)
+        audio = audio[:, frame_step:-(frame_step + 1)]
 
     return audio
 
