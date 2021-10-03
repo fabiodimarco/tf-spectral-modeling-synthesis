@@ -629,6 +629,12 @@ def harmonic_synthesis(h_freq, h_mag, h_phase, sample_rate, frame_step,
         tf.greater_equal(h_freq, sample_rate / 2.0),
         tf.zeros_like(h_mag), h_mag)
 
+    # the last element is repeated so that the synthesized audio has a size
+    # greater than or equal to that of the analysis audio
+    h_freq = tf.concat([h_freq, h_freq[:, -1:, :]], axis=1)
+    h_mag = tf.concat([h_mag, h_mag[:, -1:, :]], axis=1)
+    h_phase = tf.concat([h_phase, h_phase[:, -1:, :]], axis=1)
+
     h_freq = tf.expand_dims(h_freq, axis=-1)
     h_phase = tf.expand_dims(h_phase, axis=-1)
     h_mag = tf.expand_dims(h_mag, axis=-1)
@@ -734,12 +740,6 @@ def harmonic_analysis(signals, h_freq_estimate, sample_rate, frame_step,
     h_mag = tf.cast(h_mag, dtype=tf.float32)
     h_phase = tf.cast(h_phase, dtype=tf.float32)
 
-
-    # the last element is repeated so that the synthesized audio has a size
-    # greater than or equal to that of the analysis audio
-    h_freq = tf.concat([h_freq, h_freq[:, -1:, :]], axis=1)
-    h_mag = tf.concat([h_mag, h_mag[:, -1:, :]], axis=1)
-    h_phase = tf.concat([h_phase, h_phase[:, -1:, :]], axis=1)
     h_mag = tf.where(h_freq == 0.0, 0.0, db_to_lin(h_mag))
 
     return h_freq, h_mag, h_phase
