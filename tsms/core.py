@@ -623,23 +623,6 @@ def generate_phase(h_freq, sample_rate, frame_step,
     return h_phase
 
 
-def freq_smoothing(x, window=0):
-    # replace isolated zeros with linear interpolation
-    xs = tf.pad(x, ((0, 0), (1, 1), (0, 0)))
-    cond = (xs[:, 2:, :] != 0.0) & \
-           (xs[:, :-2, :] != 0.0) & \
-           (xs[:, 1:-1, :] == 0.0)
-    xs = tf.where(cond, 0.5 * (xs[:, 2:, :] + xs[:, :-2, :]), xs[:, 1:-1, :])
-
-    # replace remaining zeros with mean value
-    xm = non_zero_mean(xs, axis=1)
-    xs = tf.where(xs == 0.0, xm, xs)
-
-    # smooth frequency tracks
-    if window > 0:
-        xs = savitzky_golay(xs, window, 2, axis=1, mode='constant', cval=xm)
-
-    return xs
 def harmonic_synthesis(h_freq, h_mag, h_phase, sample_rate, frame_step,
                        method='pi'):
     # synthesis methods
@@ -767,9 +750,37 @@ def harmonic_analysis(signals, h_freq_estimate, sample_rate, frame_step,
     return h_freq, h_mag, h_phase
 
 
+def fill_zeros(h_freq, h_phase, sample_rate, frame_step):
+    # replace isolated zeros with linear interpolation
+    h_freq_new = tf.pad(h_freq, ((0, 0), (1, 1), (0, 0)))
+
+    cond = (h_freq_new[:, 2:, :] != 0.0) & \
+           (h_freq_new[:, :-2, :] != 0.0) & \
+           (h_freq_new[:, 1:-1, :] == 0.0)
+
+    h_freq_new = tf.where(cond,
+                          0.5 * (h_freq_new[:, 2:, :] + h_freq_new[:, :-2, :]),
+                          h_freq_new[:, 1:-1, :])
+
+    # replace freq remaining zeros with mean value
+    freq_mean = non_zero_mean(h_freq_new, axis=1)
+    h_freq_new = tf.where(h_freq_new == 0.0, freq_mean, h_freq_new)
+
+    # generate phase from frequency integration to replace unidentified zones
+    freq_correction = compute_freq_correction(
+        h_freq_new, h_phase, sample_rate, frame_step)
+    freq_correction = tf.where(h_freq == 0.0, 0.0, freq_correction)
+
+    g_phase = generate_phase(
+        h_freq_new, sample_rate, frame_step, freq_correction)
+    h_phase_new = tf.where(h_freq == 0.0, g_phase, h_phase)
+
+    return h_freq_new, h_phase_new
+
+
 def iterative_harmonic_analysis(signals, f0_estimate, sample_rate, frame_step,
                                 frame_length_list=None, min_fft_length=None,
-                                freq_smoothing_window=21,
+                                db_threshold=-180.0,
                                 semitone_variation_tol=None):
     max_f0 = tf.math.reduce_max(f0_estimate)
     harmonics = get_number_harmonics(max_f0, sample_rate)
@@ -787,10 +798,7 @@ def iterative_harmonic_analysis(signals, f0_estimate, sample_rate, frame_step,
         frame_step=frame_step,
         frame_length=frame_length_list[0],
         min_fft_length=min_fft_length,
-        db_threshold=-180.0)
-
-    h_freq = tf.where(h_freq == 0.0,
-                      0.0, freq_smoothing(h_freq, window=freq_smoothing_window))
+        db_threshold=db_threshold)
 
     i = tf.complex(0.0, 1.0)
 
@@ -811,28 +819,21 @@ def iterative_harmonic_analysis(signals, f0_estimate, sample_rate, frame_step,
             frame_step=frame_step,
             frame_length=frame_length,
             min_fft_length=min_fft_length,
-            db_threshold=-180.0)
+            db_threshold=db_threshold)
 
         # limits the frequency variations with respect to the first iteration
         if semitone_variation_tol is not None:
             up_tol = 2.0 ** (semitone_variation_tol / 12.0)
             down_tol = 2.0 ** (-semitone_variation_tol / 12.0)
 
-            hfe = tf.concat([h_freq_estimate, h_freq_estimate[:, -1:, :]],
-                            axis=1)
-
             f1 = tf.where((f0 > 0.0) &
                           (f1 > 0.0) &
-                          (f1 < hfe * up_tol) &
-                          (f1 > hfe * down_tol),
+                          (f1 < h_freq_estimate * up_tol) &
+                          (f1 > h_freq_estimate * down_tol),
                           f1, 0.0)
 
             m1 = tf.where(f1 == 0.0, 0.0, m1)
             p1 = tf.where(f1 == 0.0, 0.0, p1)
-
-        # adds to h_freq, h_mag, h_phase the new identified in the residual
-        f1 = tf.where(f1 == 0.0,
-                      0.0, freq_smoothing(f1, window=freq_smoothing_window))
 
         m_sum = m0 + m1
         h_freq = tf.where(m_sum > 0.0,
@@ -849,8 +850,8 @@ def iterative_harmonic_analysis(signals, f0_estimate, sample_rate, frame_step,
         h_mag = tf.math.abs(h_complex)
         h_phase = tf.math.angle(h_complex) % (2.0 * np.pi)
 
-    # remove zeros from frequency tracks
-    h_freq = freq_smoothing(h_freq)
+    # remove zeros from frequency and phase tracks
+    h_freq, h_phase = fill_zeros(h_freq, h_phase, sample_rate, frame_step)
 
     return h_freq, h_mag, h_phase
 
