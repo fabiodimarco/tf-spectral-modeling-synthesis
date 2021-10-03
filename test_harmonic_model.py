@@ -40,6 +40,7 @@ def main():
         f0_estimate=refined_f0_estimate,
         sample_rate=sample_rate,
         frame_step=frame_step,
+        db_threshold=-180.0,
         semitone_variation_tol=1.0)
 
     print(h_freq.shape)
@@ -84,8 +85,6 @@ def main():
     sf.write(f'samples/outs/{filename}_residual.wav', residual, sample_rate)
     sf.write(f'samples/outs/{filename}_no_phase.wav', no_phase, sample_rate)
 
-    plt.show()
-
     # plot results
 
     def specgrams(x, title):
@@ -121,7 +120,6 @@ def main():
 
     plt.figure()
     h_freq = harmonic_model.h_freq
-    # h_freq = tf.where(h_freq == 0.0, np.inf, h_freq)
     plt.plot(np.squeeze(h_freq.numpy()))
     plt.title('frequency of sinusoidal tracks')
 
