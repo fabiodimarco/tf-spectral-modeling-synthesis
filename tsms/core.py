@@ -441,9 +441,8 @@ def refine_f0(signals, f0_estimate, sample_rate, frame_step,
     period = non_zero_mean(peak_pos, axis=-1)
 
     period_mean = non_zero_mean(period, axis=1)
-    if tf.squeeze(period_mean) > 0.0:
-        f0_mean = sample_rate / period_mean
 
+    f0_mean = tf.where(period_mean > 0.0, sample_rate / period_mean, f0_mean)
     f0 = tf.where(period > 0.0, sample_rate / period, f0_mean)
 
     return f0, clarity, energy
